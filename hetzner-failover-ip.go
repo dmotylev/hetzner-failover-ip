@@ -23,7 +23,7 @@ func unbrace(s string) string {
 func printAllFailoverIPs() {
 	var ips []api.Failover
 	if err := api.Get("/failover", &ips); err != nil {
-		log.Fatalf("got error: %s", err)
+		log.Fatal(err)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 1, ' ', 0)
@@ -39,7 +39,7 @@ func printAllFailoverIPs() {
 func printFailoverIp(addr string) {
 	var failover api.Failover
 	if err := api.Get("/failover/"+addr, &failover); err != nil {
-		log.Fatalf("got error: %s", err)
+		log.Fatal(err)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 1, ' ', 0)
@@ -57,7 +57,7 @@ func updateFailoverIp(addr, activeServerIp string) {
 	)
 	params.Add("active_server_ip", activeServerIp)
 	if err := api.Post("/failover/"+addr, params, &failover); err != nil {
-		log.Fatalf("got error: %s", err)
+		log.Fatal(err)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 1, ' ', 0)
