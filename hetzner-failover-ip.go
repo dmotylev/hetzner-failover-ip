@@ -79,6 +79,9 @@ func main() {
 
 	// load credentials
 	rc, err := properties.Load(os.ExpandEnv("$HOME/.hetzner.rc"))
+	if err != nil {
+		rc, err = properties.Load(os.ExpandEnv("/etc/hetzner-api.conf"))
+	}
 
 	if err != nil {
 		log.Fatalf("no credentials: %s", err)
