@@ -7,10 +7,13 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"text/tabwriter"
 
 	"github.com/dmotylev/goproperties"
 	"github.com/dmotylev/hetzner/api"
+)
+
+const (
+	format = "%s\t/%d\t%s\t%s\t%d\n"
 )
 
 func unbrace(s string) string {
@@ -20,34 +23,15 @@ func unbrace(s string) string {
 	return s
 }
 
-func printAllFailoverIPs() {
-	var ips []api.Failover
-	if err := api.Get("/failover", &ips); err != nil {
-		log.Fatal(err)
-	}
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 1, ' ', 0)
-	fmt.Fprintln(w, "ip\tactive_server_ip\tserver_ip\tserver_number")
-	for _, d := range ips {
-		a := net.ParseIP(d.Netmask)
-		_, bits := net.IPv4Mask(a[0], a[1], a[2], a[3]).Size()
-		fmt.Fprintf(w, "%s/%d\t%s\t%s\t%d\n", d.Ip, bits, d.Active_server_ip, d.Server_ip, d.Server_number)
-	}
-	w.Flush()
-}
-
 func printFailoverIp(addr string) {
 	var failover api.Failover
 	if err := api.Get("/failover/"+addr, &failover); err != nil {
 		log.Fatal(err)
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 1, ' ', 0)
-	fmt.Fprintln(w, "ip\tactive_server_ip\tserver_ip\tserver_number")
 	a := net.ParseIP(failover.Netmask)
 	_, bits := net.IPv4Mask(a[0], a[1], a[2], a[3]).Size()
-	fmt.Fprintf(w, "%s/%d\t%s\t%s\t%d\n", failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number)
-	w.Flush()
+	fmt.Printf(format, failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number)
 }
 
 func updateFailoverIp(addr, activeServerIp string) {
@@ -60,18 +44,15 @@ func updateFailoverIp(addr, activeServerIp string) {
 		log.Fatal(err)
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 1, ' ', 0)
-	fmt.Fprintln(w, "ip\tactive_server_ip\tserver_ip\tserver_number")
 	a := net.ParseIP(failover.Netmask)
 	_, bits := net.IPv4Mask(a[0], a[1], a[2], a[3]).Size()
-	fmt.Fprintf(w, "%s/%d\t%s\t%s\t%d\n", failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number)
-	w.Flush()
+	fmt.Printf(format, failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number)
 }
 
 func main() {
 	var (
-		failoverIp = flag.String("failover-ip", "", "failover ip address")
-		serverIp   = flag.String("active-server-ip", "", "new active server ip")
+		failoverIp = flag.String("f", "", "Failover ip address")
+		serverIp   = flag.String("s", "", "new active Server ip")
 	)
 	flag.Parse()
 
@@ -90,8 +71,6 @@ func main() {
 	api.SetBasicAuth(unbrace(rc["login"]), unbrace(rc["password"]))
 
 	switch {
-	case flag.NFlag() == 0:
-		printAllFailoverIPs()
 	case len(*failoverIp) != 0 && len(*serverIp) == 0:
 		printFailoverIp(*failoverIp)
 	case len(*failoverIp) != 0 && len(*serverIp) != 0:
