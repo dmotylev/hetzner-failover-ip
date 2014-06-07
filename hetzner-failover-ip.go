@@ -113,12 +113,15 @@ func main() {
 		serverIp           = flag.String("s", "", "new active Server ip")
 		allFailoversWanted = flag.Bool("a", false, "list All failover ips (failover ip, mask, active server ip, server ip, server number)")
 		dutyStatusWanted   = flag.Bool("t", false, "Test if local server is the active; returns 0 for active 255 otherwise")
+		takeWanted         = flag.Bool("take", false, "set local ip as new active server ip")
 	)
 	flag.Parse()
 
 	api.SetBasicAuth(unbrace(rc["login"]), unbrace(rc["password"]))
 
 	switch {
+	case *takeWanted:
+		updateFailoverIp(*failoverIp, *localIp, *localIp)
 	case *dutyStatusWanted:
 		checkDutyStatus(*failoverIp, *localIp)
 	case *allFailoversWanted:
