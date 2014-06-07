@@ -1,0 +1,258 @@
+#!/bin/sh
+#
+#
+#   OCF Resource Agent compliant Hetzner Failover IP script
+#
+# Copyright 2014 Dmitry Motylev
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# OCF parameters are as below:
+#  OCF_RESKEY_ip
+#  OCF_RESKEY_off_lock
+#
+
+#######################################################################
+# Initialization:
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+
+OCF_RESKEY_off_lock_default=/var/lock/hetzner-failover-ip-off
+: ${OCF_RESKEY_off_lock=${OCF_RESKEY_off_lock_default}}
+
+FOIP_CTL=/usr/local/bin/hetzner-failover-ip
+
+#######################################################################
+
+meta_data() {
+    cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="hetzner-failover-ip" version="0.9">
+<version>1.0</version>
+
+<longdesc lang="en">
+Hetzner Failover IP agent
+</longdesc>
+<shortdesc lang="en">Hetzner Failover IP agent</shortdesc>
+
+<parameters>
+
+<parameter name="ip" unique="1" required="1">
+<longdesc lang="en">
+The actual failover IP address.
+</longdesc>
+<shortdesc lang="en">The actual failover IP address.</shortdesc>
+<content type="string" default="" />
+</parameter>
+
+<parameter name="off_lock" unique="1" required="0">
+<longdesc lang="en">
+Path to flag file for OFF state
+</longdesc>
+<shortdesc lang="en">Path to flag file for OFF state</shortdesc>
+<content type="string" default="${OCF_RESKEY_off_lock_default}" />
+</parameter>
+
+</parameters>
+
+<actions>
+<action name="start"        timeout="120s" />
+<action name="stop"         timeout="10s" />
+<action name="monitor"      timeout="120s" interval="90s" depth="0" start-delay="0s" />
+<action name="meta-data"    timeout="5s" />
+<action name="validate-all" timeout="10s" />
+</actions>
+</resource-agent>
+END
+}
+
+#######################################################################
+
+hetzner_failover_ip_usage() {
+    cat <<END
+usage: $0 {start|stop|monitor|validate-all|meta-data}
+
+Expects to have a fully populated OCF RA-compliant environment set.
+END
+}
+
+hetzner_failover_ip_start() {
+    local rc
+
+    hetzner_failover_ip_validate_all || exit $?
+
+    if hetzner_failover_ip_monitor; then
+        ocf_log info "resource $OCF_RESOURCE_INSTANCE is already running"
+        return $OCF_SUCCESS
+    fi
+
+    ocf_run -q -warn $FOIP_CTL -f $OCF_RESKEY_ip -take
+    local code=$?
+    case "$code" in
+    0)
+        rm -f "$OCF_RESKEY_off_lock"
+        ocf_log info "resource $OCF_RESOURCE_INSTANCE started successfully"
+        ;;
+    103)
+        ocf_log warn "rate limit for Hetzner API call exceeded; sleeping for 30s..."
+        sleep 30
+        exit $OCF_ERR_GENERIC
+        ;;
+    109)
+        ocf_log warn "switching the failover IP is blocked due to another active request; sleeping for 30s"
+        sleep 30
+        exit $OCF_ERR_GENERIC
+        ;;
+    200)
+        ocf_log crit "due to an internal error switching of the failover IP failed"
+        exit $OCF_ERR_CONFIGURED
+        ;;
+    *)
+        ocf_log err "resource has failed with code $code"
+        exit $OCF_ERR_GENERIC
+        ;;
+    esac
+
+    return $OCF_SUCCESS
+}
+
+hetzner_failover_ip_create_off_lock() {
+    date +%s > "$OCF_RESKEY_off_lock"
+    ocf_log info "resource has been marked as stopped"
+}
+
+hetzner_failover_ip_stop() {
+    local rc
+
+    # exit immediately if configuration is not valid
+    hetzner_failover_ip_validate_all || exit $?
+
+    hetzner_failover_ip_monitor
+    rc=$?
+    case "$rc" in
+    $OCF_SUCCESS)
+        # Currently running. Normal, expected behavior.
+        ocf_log debug "resource is currently running"
+        ;;
+    $OCF_NOT_RUNNING)
+        # Currently not running. Nothing to do.
+        ocf_log info "resource is already stopped"
+        return $OCF_SUCCESS
+        ;;
+    esac
+
+    hetzner_failover_ip_create_off_lock
+    return $OCF_SUCCESS
+}
+
+hetzner_failover_ip_monitor() {
+    hetzner_failover_ip_validate_all || exit $?
+
+    ocf_run -q -warn $FOIP_CTL -f $OCF_RESKEY_ip -t
+    local code=$?
+    case "$code" in
+    0)
+        rm -f "$OCF_RESKEY_off_lock"
+        return $OCF_SUCCESS
+        ;;
+    255)
+        hetzner_failover_ip_create_off_lock
+        return $OCF_NOT_RUNNING
+        ;;
+    esac
+
+    if [ -f "$OCF_RESKEY_off_lock" ]; then
+        local stamp=`cat $OCF_RESKEY_off_lock`
+        local now=`date +%s`
+        local age=`expr $now - $stamp`
+        if [ $age -lt 30 ]; then
+            ocf_log info "OFF flag age is less 30s; resource is not running"
+            return $OCF_NOT_RUNNING
+        fi
+    fi
+
+    case "$code" in
+    103)
+        ocf_log warn "rate limit for Hetzner API call exceeded; sleeping for 30s..."
+        sleep 30
+        exit $OCF_ERR_GENERIC
+        ;;
+    200)
+        ocf_log crit "due to an internal error switching of the failover IP failed"
+        exit $OCF_ERR_CONFIGURED
+        ;;
+    *)
+        ocf_log err "resource has failed with code $code"
+        exit $OCF_ERR_GENERIC
+        ;;
+    esac
+}
+
+hetzner_failover_ip_validate_all() {
+    check_binary $FOIP_CTL
+
+    egrep -q "^local-ip=[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" /etc/hetzner-api.conf
+    if [ $? -ne 0 ]; then
+        ocf_log err "local-ip is not configured in /etc/hetzner-api.conf"
+        return $OCF_ERR_CONFIGURED
+    fi
+
+    echo $OCF_RESKEY_ip | egrep -q "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$"
+    if [ $? -ne 0 ]; then
+        ocf_log err "actual failover ip is not correctly configured"
+        return $OCF_ERR_CONFIGURED
+    fi
+
+    if [ "$OCF_RESKEY_off_lock" = "" ]; then
+        ocf_log err "off_lock is not defined"
+        return $OCF_ERR_CONFIGURED
+    fi
+
+    return $OCF_SUCCESS
+}
+
+: ${OCF_RESKEY_CRM_meta_interval=0}
+: ${OCF_RESKEY_CRM_meta_globally_unique:="true"}
+
+case $__OCF_ACTION in
+meta-data)  meta_data
+    exit $OCF_SUCCESS
+    ;;
+start)
+    hetzner_failover_ip_start
+    ;;
+stop)
+    hetzner_failover_ip_stop
+    ;;
+monitor)
+    hetzner_failover_ip_monitor
+    ;;
+validate-all)
+    hetzner_failover_ip_validate_all
+    ;;
+usage|help)
+    hetzner_failover_ip_usage
+    exit $OCF_SUCCESS
+    ;;
+*)
+    hetzner_failover_ip_usage
+    exit $OCF_ERR_UNIMPLEMENTED
+    ;;
+esac
+rc=$?
+ocf_log debug "${OCF_RESOURCE_INSTANCE} $__OCF_ACTION : $rc"
+exit $rc
+
+# vim: ts=4:set et:
