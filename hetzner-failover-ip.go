@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	format = "%s\t/%d\t%s\t%s\t%d\n"
+	format = "%s\t/%d\t%s\t%s\t%d\t%c\n"
 )
 
 func unbrace(s string) string {
@@ -23,7 +23,7 @@ func unbrace(s string) string {
 	return s
 }
 
-func printAllFailoverIPs() {
+func printAllFailoverIPs(addr string) {
 	var ips []api.Failover
 	if err := api.Get("/failover", &ips); err != nil {
 		log.Fatal(err)
@@ -32,7 +32,11 @@ func printAllFailoverIPs() {
 	for _, d := range ips {
 		a := net.ParseIP(d.Netmask)
 		_, bits := net.IPv4Mask(a[0], a[1], a[2], a[3]).Size()
-		fmt.Printf(format, d.Ip, bits, d.Active_server_ip, d.Server_ip, d.Server_number)
+		mark := ' '
+		if d.Ip.String() == addr {
+			mark = '*'
+		}
+		fmt.Printf(format, d.Ip, bits, d.Active_server_ip, d.Server_ip, d.Server_number, mark)
 	}
 }
 
@@ -44,7 +48,7 @@ func printFailoverIp(addr string) {
 
 	a := net.ParseIP(failover.Netmask)
 	_, bits := net.IPv4Mask(a[0], a[1], a[2], a[3]).Size()
-	fmt.Printf(format, failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number)
+	fmt.Printf(format, failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number, '*')
 }
 
 func updateFailoverIp(addr, activeServerIp string) {
@@ -59,17 +63,10 @@ func updateFailoverIp(addr, activeServerIp string) {
 
 	a := net.ParseIP(failover.Netmask)
 	_, bits := net.IPv4Mask(a[0], a[1], a[2], a[3]).Size()
-	fmt.Printf(format, failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number)
+	fmt.Printf(format, failover.Ip, bits, failover.Active_server_ip, failover.Server_ip, failover.Server_number, '*')
 }
 
 func main() {
-	var (
-		failoverIp         = flag.String("f", "", "Failover ip address")
-		serverIp           = flag.String("s", "", "new active Server ip")
-		allFailoversWanted = flag.Bool("l", false, "List all failover ips (failover ip, mask, active server ip, server ip, server number)")
-	)
-	flag.Parse()
-
 	log.SetFlags(0)
 
 	// load credentials
@@ -82,11 +79,18 @@ func main() {
 		log.Fatalf("no credentials: %s", err)
 	}
 
+	var (
+		failoverIp         = flag.String("f", rc["failover-ip"], "Failover ip address (default to 'failover-ip' value in rc)")
+		serverIp           = flag.String("s", "", "new active Server ip")
+		allFailoversWanted = flag.Bool("l", false, "List all failover ips (failover ip, mask, active server ip, server ip, server number)")
+	)
+	flag.Parse()
+
 	api.SetBasicAuth(unbrace(rc["login"]), unbrace(rc["password"]))
 
 	switch {
 	case *allFailoversWanted:
-		printAllFailoverIPs()
+		printAllFailoverIPs(*failoverIp)
 	case len(*failoverIp) != 0 && len(*serverIp) == 0:
 		printFailoverIp(*failoverIp)
 	case len(*failoverIp) != 0 && len(*serverIp) != 0:
